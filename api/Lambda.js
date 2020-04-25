@@ -5,7 +5,7 @@ import {getAWS} from "../../AppConfig";
 
 // Prepare to call Lambda function
 let AWS = getAWS();
-let lambda = new AWS.Lambda({region: 'us-east-1', apiVersion: '2015-03-31'});
+let lambda = new AWS.Lambda({region: 'us-east-1'});
 
 /**
  * This is the static class that allows us to invoke the AWS Lambda function using the predefined JSON structure.

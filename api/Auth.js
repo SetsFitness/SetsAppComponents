@@ -1,13 +1,69 @@
-import {Auth} from "aws-amplify";
+import Amplify, {Auth} from "aws-amplify";
 import {err, log} from "../../Constants";
 import TestHelper from "../testing/TestHelper";
 import jwt_decode from "jwt-decode";
+import {getAWS, getCognitoURL} from "../../AppConfig";
+
+const AWS = getAWS();
+
+Amplify.Logger.LOG_LEVEL = 'DEBUG';
 
 /**
  * This class wraps all the logic for the Authentication module of Amplify so that we can use it for testing and it
  * automatically handles all TestHelper logic. Does everything for Cognito.
  */
 class AuthAPI {
+  /**
+   * Refreshes a user in the AWS config credentials.
+   *
+   * @param {CognitoUser} user The AWS user to refresh.
+   * @param {function(*)} successHandler
+   * @param {function(*)} failureHandler
+   */
+  static refreshUser(user, successHandler, failureHandler) {
+    log && console.log("### AUTH: refreshUser ###");
+    user.getSession((error, session) => {
+      if (error) {
+        err && console.error("!!!AUTH: Failed to get current user!!!");
+        err && console.error(error);
+        failureHandler && failureHandler(error);
+      }
+      else {
+        const refresh_token = session.getRefreshToken();
+        if (AWS.config.credentials.needsRefresh()) {
+          user.refreshSession(refresh_token, (error, session) => {
+            if (error) {
+              err && console.error("!!!AUTH: Failed to get current user!!!");
+              err && console.error(error);
+              failureHandler && failureHandler(error);
+            } else {
+              if (!AWS.config.credentials.params.Logins) {
+                AWS.config.credentials.params.Logins = {};
+              }
+              AWS.config.credentials.params.Logins[getCognitoURL()] = session.getIdToken().getJwtToken();
+              AWS.config.credentials.refresh((error) => {
+                if (error) {
+                  err && console.error("!!!AUTH: Failed to get current user!!!");
+                  err && console.error(error);
+                  failureHandler && failureHandler(error);
+                } else {
+                  log && console.log("TOKEN SUCCESSFULLY UPDATED");
+                  log && console.log("AUTH: Succeeded update user");
+                  successHandler && successHandler(user);
+                }
+              });
+            }
+          });
+        }
+        else {
+          log && console.log("TOKEN DOESN'T NEED UPDATING");
+          log && console.log("AUTH: Succeeded update user");
+          successHandler && successHandler(user);
+        }
+      }
+    });
+  }
+
   /**
    * Updates the Auth status of the current user if the browser has already stored the authentication tokens for the
    * user so they will automatically sign in when they enter the page.
@@ -18,14 +74,22 @@ class AuthAPI {
    */
   static getCurrentUser(successHandler, failureHandler) {
     // TODO This could totally be overkill lol
-    TestHelper.ifTesting || Auth.currentCredentials();
-    // Auth.currentSession();
-    // Auth.currentUserCredentials();
-    // Auth.currentUserInfo();
-    // Auth.currentUserPoolUser();
-    TestHelper.ifTesting || Auth.currentAuthenticatedUser().then((user) => {
-      log && console.log("AUTH: Succeeded update user");
-      successHandler && successHandler(user);
+    // TestHelper.ifTesting || Auth.currentCredentials();
+    // TestHelper.ifTesting || Auth.currentSession();
+    // TestHelper.ifTesting || Auth.currentUserCredentials();
+    // TestHelper.ifTesting || Auth.currentUserInfo();
+    // TestHelper.ifTesting || Auth.currentUserPoolUser();
+    log && console.log("### AUTH: getCurrentUser ###");
+    TestHelper.ifTesting || Auth.currentUserPoolUser().then((user) => {
+      this.refreshUser(user, () => {
+        log && console.log("TOKEN SUCCESSFULLY UPDATED");
+        log && console.log("AUTH: Succeeded update user");
+        successHandler && successHandler(user);
+      }, (error) => {
+        err && console.error("!!!AUTH: Failed to get current user!!!");
+        err && console.error(error);
+        failureHandler && failureHandler(error);
+      });
     }).catch(error => {
       err && console.error("!!!AUTH: Failed to get current user!!!");
       err && console.error(error);
@@ -49,6 +113,7 @@ class AuthAPI {
    * @return {*} Debugging info for the Auth operation.
    */
   static signUp(username, password, name, email, successHandler, failureHandler) {
+    log && console.log("### AUTH: signUp ###");
     TestHelper.ifTesting || Auth.signUp({
       username,
       password,
@@ -82,6 +147,7 @@ class AuthAPI {
    * @return {*} Debugging info for the Auth operation.
    */
   static confirmSignUp(username, code, successHandler, failureHandler) {
+    log && console.log("### AUTH: confirmSignUp ###");
     TestHelper.ifTesting || Auth.confirmSignUp(username, code).then(authUser => {
       log && console.log("AUTH: Succeeded confirm sign up");
       successHandler && successHandler(authUser);
@@ -106,6 +172,7 @@ class AuthAPI {
    * @return {*} Debugging info for the Auth operation.
    */
   static forgotPassword(username, successHandler, failureHandler) {
+    log && console.log("### AUTH: forgotPassword ###");
     TestHelper.ifTesting || Auth.forgotPassword(username).then(data => {
       log && console.log("AUTH: Succeeded forgot password");
       successHandler && successHandler(data);
@@ -131,6 +198,7 @@ class AuthAPI {
    * @return {*} Debugging info for the Auth operation.
    */
   static confirmForgotPassword(username, code, newPassword, successHandler, failureHandler) {
+    log && console.log("### AUTH: confirmForgotPassword ###");
     TestHelper.ifTesting || Auth.forgotPasswordSubmit(username, code, newPassword).then(data => {
       log && console.log("AUTH: Succeeded confirm forgot password");
       successHandler && successHandler(data);
@@ -155,9 +223,16 @@ class AuthAPI {
    * @return {*} Debugging info for the Auth operation.
    */
   static signIn(username, password, successHandler, failureHandler) {
+    log && console.log("### AUTH: signIn ###");
     TestHelper.ifTesting || Auth.signIn(username, password).then(user => {
-      log && console.log("AUTH: Succeeded sign in");
-      successHandler && successHandler(user);
+      this.refreshUser(user, () => {
+        log && console.log("AUTH: Succeeded sign in");
+        successHandler && successHandler(user);
+      }, (error) => {
+        err && console.error("!!!AUTH: Failed sign in!!!");
+        err && console.error(error);
+        failureHandler && failureHandler(error);
+      });
     }).catch(error => {
       err && console.error("!!!AUTH: Failed sign in!!!");
       err && console.error(error);
@@ -179,6 +254,7 @@ class AuthAPI {
    */
   static googleSignIn(googleUser, successHandler, failureHandler) {
     // Get all the information from the google user
+    log && console.log("### AUTH: googleSignIn ###");
     const {id_token, expires_at} = googleUser.getAuthResponse();
     const profile = googleUser.getBasicProfile();
     return AuthAPI.federatedSignIn("google", id_token, expires_at, profile.getEmail(), profile.getName(),
@@ -218,6 +294,7 @@ class AuthAPI {
    */
   static federatedSignIn(federation, token, expires_at, email, name, birthdate, gender, sub,
                          successHandler, failureHandler) {
+    log && console.log("### AUTH: federatedSignIn ###");
     const federatedUser = {email, name, birthdate, gender, sub};
     TestHelper.ifTesting || Auth.federatedSignIn('google', {token, expires_at}, federatedUser).then(user => {
       log && console.log("AUTH: Succeeded federated sign in");
@@ -243,6 +320,7 @@ class AuthAPI {
    * @return {*} Debugging info for the Auth operation.
    */
   static changePassword(oldPassword, newPassword, successHandler, failureHandler) {
+    log && console.log("### AUTH: changePassword ###");
     TestHelper.ifTesting || Auth.currentAuthenticatedUser()
       .then(user => Auth.changePassword(user, oldPassword, newPassword))
       .then((data) => {
@@ -266,6 +344,7 @@ class AuthAPI {
    * @return {*} Debugging info for the Auth operation.
    */
   static signOut(successHandler, failureHandler) {
+    log && console.log("### AUTH: signOut ###");
     TestHelper.ifTesting || Auth.signOut({global: true}).then(data => {
       log && console.log("AUTH: Succeeded sign out");
       successHandler && successHandler(data);
